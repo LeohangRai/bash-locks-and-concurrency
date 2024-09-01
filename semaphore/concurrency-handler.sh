@@ -1,5 +1,12 @@
 #!usr/bin/env bash
 
+# Goal:
+# Use a semaphore stored in a file to keep track of the number of scripts running currently and limit the number of concurrent jobs.
+# If the semaphore count is greater than or equal to the 'MAX_CONCURRENT_JOBS', the current script will wait until the semaphore count becomes less than 'MAX_CONCURRENT_JOBS'.
+# The script increments the semaphore count when it starts running and decrements it when it finishes (using the 'trap' command on EXIT signal).
+# The 'flock' command is being used here to ensure that only one script can modify the semaphore file at a time,
+# in order to prevent race conditions where multiple scripts may try to update the count simultaneously
+
 MAX_CONCURRENT_JOBS=1
 RETRY_INTERVAL=5
 
@@ -7,8 +14,13 @@ mkdir -p './tmp/locks'
 echo '*' >./tmp/.gitignore
 SEMAPHORE_FILE='./tmp/locks/semaphore.lock'
 
-# a flag that will be used to track whether the current shell script execution has acquired the lock or not. The 'EXIT' trap gets triggered even when the user interrupts the script execution by hitting 'CTRL+C', which means that the semaphore could be decremented undesirably. By checking the 'LOCK_ACQUIRED' flag, we will determine whether to decrement the semaphore or not based on whether the script actually executed and exited or the user interrupted before the script could even acquire the lock.
-LOCK_ACQUIRED=0
+# a flag that will be used to track whether the current shell script execution has acquired the lock or not.
+# The 'EXIT' trap gets triggered even when the user interrupts the script execution by hitting 'CTRL+C',
+# which means that the semaphore could be decremented undesirably.
+# By checking the 'SCRIPT_EXECUTED' flag, we will determine whether to decrement the semaphore or not
+# based on whether the script actually executed and exited
+# or the user interrupted before the script could even acquire the lock.
+SCRIPT_EXECUTED=0
 
 # Example:
 # Let's say, we set the MAX_CONCURRENT_JOBS to 1 and run the script simultaneously in 4 different terminal sessions.
@@ -22,13 +34,13 @@ touch "$SEMAPHORE_FILE"
 function decrement_semaphore() {
     echo "EXIT trap detected..."
     # exit early if lock was not acquired
-    if ! [[ $LOCK_ACQUIRED -eq 1 ]]; then
+    if ! [[ $SCRIPT_EXECUTED -eq 1 ]]; then
         echo "Lock not acquired, no decrement required"
         exit 0
     fi
     echo "Decrementing the semaphore..."
     exec 200<>"$SEMAPHORE_FILE" # open a read/write '<>' file descriptor on the semaphore file
-    flock 200
+    flock 200                   # lock the file so that other scripts may not access it while we are decrementing
 
     # decrement the semaphore count
     CURRENT=$(cat "$SEMAPHORE_FILE")
@@ -55,13 +67,12 @@ while true; do
 
     if [[ "$CURRENT" -lt "$MAX_CONCURRENT_JOBS" ]]; then
         echo $((CURRENT + 1)) >"$SEMAPHORE_FILE" # increment the semaphore count and proceed (by breaking out of the loop)
-        flock -u 200                             # release the lock
-        LOCK_ACQUIRED=1                          # set the flag to true (to signal that the semaphore count should be decremented in case the current script gets interrupted by the user)
+        flock -u 200                             # release the lock after incrementing the semaphore count (the only reason for locking it in the first place was to ensure that no other script would be able to modify the semaphore count at the same time)
+        SCRIPT_EXECUTED=1                        # set the flag to true (to signal that the semaphore count should be decremented in case the current script gets interrupted by the user)
         exec 200>&-                              # close the file descriptor
         break                                    # break out of the loop
     else
-        # release the lock and wait before checking again
-        flock -u 200
+        flock -u 200 # release the lock and wait before checking again
         exec 200>&-
         echo "Max concurrent scripts running, waiting..."
         sleep $RETRY_INTERVAL
