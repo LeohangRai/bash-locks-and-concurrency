@@ -33,9 +33,9 @@ touch "$SEMAPHORE_FILE"
 # function to decrement the semaphore count on script completion (EXIT signal)
 function decrement_semaphore() {
     echo "EXIT trap detected..."
-    # exit early if lock was not acquired
+    # exit early if script was not executed
     if ! [[ $SCRIPT_EXECUTED -eq 1 ]]; then
-        echo "Lock not acquired, no decrement required"
+        echo "Script not excuted, no decrement required"
         exit 0
     fi
     echo "Decrementing the semaphore..."
