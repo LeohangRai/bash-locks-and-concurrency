@@ -70,12 +70,17 @@ while true; do
         flock -u 200                             # release the lock after incrementing the semaphore count (the only reason for locking it in the first place was to ensure that no other script would be able to modify the semaphore count at the same time)
         SCRIPT_EXECUTED=1                        # set the flag to true (to signal that the semaphore count should be decremented in case the current script gets interrupted by the user)
         exec 200>&-                              # close the file descriptor
-        break                                    # break out of the loop
+        echo -e "\n"
+        break # break out of the loop
     else
         flock -u 200 # release the lock and wait before checking again
         exec 200>&-
-        echo "Max concurrent scripts running, waiting..."
-        sleep $RETRY_INTERVAL
+        sleep_counter=$RETRY_INTERVAL
+        while [ $sleep_counter -ge 0 ]; do
+            echo -n -e "\033[77DMax concurrent scripts running, reattempting in $sleep_counter seconds..."
+            sleep_counter=$((sleep_counter - 1))
+            sleep 1
+        done
     fi
 done
 
